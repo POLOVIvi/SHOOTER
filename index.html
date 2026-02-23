@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>SHOOTER</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; touch-action: none; font-family: 'Segoe UI', system-ui, sans-serif; }
+  canvas { display: block; }
+
+  /* --- Rotate overlay --- */
+  #uiRotate {
+    display: none;
+    position: fixed; inset: 0;
+    background: #0d1117;
+    color: #c9d1d9;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    gap: 18px;
+  }
+  #uiRotate .icon { font-size: 56px; animation: wiggle 1.5s ease-in-out infinite; }
+  #uiRotate p { font-size: 20px; letter-spacing: 0.5px; opacity: 0.85; }
+  @keyframes wiggle { 0%,100%{transform:rotate(-20deg)} 50%{transform:rotate(20deg)} }
+
+  /* --- Start overlay --- */
+  #uiStart {
+    position: fixed; inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    background: rgba(0,0,0,0.45);
+  }
+  #uiStart.hidden { display: none; }
+  .start-card {
+    background: rgba(13,17,23,0.92);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 20px;
+    padding: 36px 44px;
+    max-width: 420px;
+    width: 90%;
+    text-align: center;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  }
+  .start-card h1 {
+    color: #e6edf3;
+    font-size: 32px;
+    font-weight: 700;
+    margin-bottom: 10px;
+    letter-spacing: -0.5px;
+  }
+  .start-card .subtitle {
+    color: rgba(201,209,217,0.7);
+    font-size: 14px;
+    line-height: 1.5;
+    margin-bottom: 28px;
+  }
+  .btn {
+    display: inline-block;
+    padding: 12px 36px;
+    border: none;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.1s, box-shadow 0.15s;
+    letter-spacing: 0.3px;
+  }
+  .btn:active { transform: scale(0.96); }
+  .btn-primary {
+    background: linear-gradient(135deg, #0070f3, #0051cc);
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(0,112,243,0.35);
+  }
+  .btn-primary:hover { box-shadow: 0 6px 20px rgba(0,112,243,0.45); }
+  /* --- HUD (top bar during gameplay) --- */
+  #uiTop {
+    position: fixed;
+    top: 12px; right: 16px;
+    display: none;
+    align-items: center;
+    gap: 12px;
+    z-index: 50;
+  }
+  #uiTop.active { display: flex; }
+  .hud-pill {
+    background: rgba(13,17,23,0.7);
+    border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(8px);
+    border-radius: 14px;
+    padding: 10px 20px;
+    color: #e6edf3;
+    font-size: 20px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .btn-exit {
+    padding: 10px 18px;
+    border-radius: 14px;
+    font-size: 13px;
+    font-weight: 600;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #8b949e;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: background 0.15s, color 0.15s;
+  }
+  .btn-exit:hover { background: rgba(255,59,48,0.15); color: #ff6b6b; border-color: rgba(255,59,48,0.3); }
+</style>
+</head>
+<body>
+
+<div id="uiRotate">
+  <div class="icon">📱</div>
+  <p>Rotate your device to landscape</p>
+</div>
+
+<div id="uiStart">
+  <div class="start-card">
+    <h1>SHOOTER</h1>
+    <p class="subtitle">Drag near the bow to aim, release to shoot.<br>Hit the target to score!</p>
+    <button class="btn btn-primary" id="btnStart">START</button>
+  </div>
+</div>
+
+<div id="uiTop">
+  <div class="hud-pill" id="hudScore">Score: 0</div>
+  <button class="btn-exit" id="btnExit">EXIT</button>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+(function () {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+
+  const elStart   = document.getElementById('uiStart');
+  const elTop     = document.getElementById('uiTop');
+  const elRotate  = document.getElementById('uiRotate');
+  const elScore   = document.getElementById('hudScore');
+  const btnStart  = document.getElementById('btnStart');
+  const btnExit   = document.getElementById('btnExit');
+
+  // ─── State machine ───
+  let state = 'start'; // "start" | "playing"
+
+  function isPortrait() {
+    return window.innerHeight > window.innerWidth;
+  }
+
+  function handleOrientation() {
+    const portrait = isPortrait();
+    elRotate.style.display = portrait ? 'flex' : 'none';
+    if (portrait) dragging = false;
+  }
+
+  function updateUI() {
+    elStart.classList.toggle('hidden', state !== 'start');
+    elTop.classList.toggle('active', state === 'playing');
+  }
+
+  function resetGame() {
+    score = 0;
+    arrows.length = 0;
+    particles.length = 0;
+    dragging = false;
+    placeTarget();
+    elScore.textContent = 'Score: 0';
+  }
+
+  function setState(next) {
+    state = next;
+    if (next === 'start') {
+      dragging = false;
+      arrows.length = 0;
+      particles.length = 0;
+    }
+    if (next === 'playing') {
+      resetGame();
+    }
+    updateUI();
+  }
+
+  // ─── UI buttons ───
+  async function startFlow() {
+    console.log('START flow: placeholder for wallet connect + tx');
+    setState('playing');
+  }
+
+  btnStart.addEventListener('click', function () { startFlow(); });
+  btnExit.addEventListener('click', function ()  { setState('start'); });
+
+  // ─── Canvas sizing ───
+  let W, H, ground;
+  function resize() {
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+    ground = H * 0.78;
+    handleOrientation();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // ─── Game variables ───
+  let score = 0;
+  const GRAVITY = 600;
+  const MAX_PULL = 140;
+  const ARROW_SPEED_FACTOR = 6;
+
+  const archer = { x: 0, y: 0, bowRadius: 30 };
+  const target = { x: 0, y: 0, radius: 32, ringCount: 3 };
+
+  let arrows = [];
+  let dragging = false;
+  let dragStart = { x: 0, y: 0 };
+  let dragCurrent = { x: 0, y: 0 };
+
+  function placeArcher() {
+    archer.x = W * 0.12;
+    archer.y = ground - 2;
+  }
+
+  function placeTarget() {
+    target.x = W * 0.82 + Math.random() * W * 0.1;
+    const minY = H * 0.15;
+    const maxY = ground - target.radius - 10;
+    target.y = minY + Math.random() * (maxY - minY);
+  }
+
+  function bowHandPos() {
+    return { x: archer.x + 18, y: archer.y - 58 };
+  }
+
+  // ─── Input (guarded by state + orientation) ───
+  function inputBlocked() {
+    return state !== 'playing' || isPortrait();
+  }
+
+  function getPos(e) {
+    if (e.touches) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    return { x: e.clientX, y: e.clientY };
+  }
+
+  function onDown(e) {
+    e.preventDefault();
+    if (inputBlocked()) return;
+    const p = getPos(e);
+    const hand = bowHandPos();
+    const dx = p.x - hand.x;
+    const dy = p.y - hand.y;
+    if (Math.sqrt(dx * dx + dy * dy) < 120) {
+      dragging = true;
+      dragStart.x = hand.x;
+      dragStart.y = hand.y;
+      dragCurrent.x = p.x;
+      dragCurrent.y = p.y;
+    }
+  }
+
+  function onMove(e) {
+    e.preventDefault();
+    if (inputBlocked() || !dragging) return;
+    const p = getPos(e);
+    dragCurrent.x = p.x;
+    dragCurrent.y = p.y;
+  }
+
+  function onUp(e) {
+    e.preventDefault();
+    if (inputBlocked() || !dragging) return;
+    dragging = false;
+
+    let dx = dragStart.x - dragCurrent.x;
+    let dy = dragStart.y - dragCurrent.y;
+    let dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 10) return;
+
+    if (dist > MAX_PULL) {
+      dx = dx / dist * MAX_PULL;
+      dy = dy / dist * MAX_PULL;
+      dist = MAX_PULL;
+    }
+
+    const power = dist / MAX_PULL;
+    const speed = power * ARROW_SPEED_FACTOR * 200;
+    const angle = Math.atan2(dy, dx);
+    const hand = bowHandPos();
+
+    arrows.push({
+      x: hand.x,
+      y: hand.y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      alive: true,
+      trail: []
+    });
+  }
+
+  canvas.addEventListener('mousedown', onDown);
+  canvas.addEventListener('mousemove', onMove);
+  canvas.addEventListener('mouseup', onUp);
+  canvas.addEventListener('touchstart', onDown, { passive: false });
+  canvas.addEventListener('touchmove', onMove, { passive: false });
+  canvas.addEventListener('touchend', onUp, { passive: false });
+
+  // ─── Drawing ───
+  function drawSky() {
+    const grad = ctx.createLinearGradient(0, 0, 0, ground);
+    grad.addColorStop(0, '#4a90d9');
+    grad.addColorStop(0.7, '#87ceeb');
+    grad.addColorStop(1, '#b8e6b8');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, ground);
+  }
+
+  function drawGround() {
+    const grad = ctx.createLinearGradient(0, ground, 0, H);
+    grad.addColorStop(0, '#5a8f3c');
+    grad.addColorStop(0.3, '#4a7a30');
+    grad.addColorStop(1, '#3a6025');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, ground, W, H - ground);
+  }
+
+  function drawCloud(cx, cy, scale) {
+    const puffs = [
+      { dx: 0,   dy: 0,   r: 25 },
+      { dx: 24,  dy: -10, r: 22 },
+      { dx: -22, dy: -3,  r: 19 },
+      { dx: 46,  dy: 2,   r: 15 },
+      { dx: -40, dy: 4,   r: 14 },
+      { dx: 10,  dy: -16, r: 18 }
+    ];
+    ctx.save();
+    ctx.shadowColor = 'rgba(100,120,150,0.18)';
+    ctx.shadowBlur = 10 * scale;
+    ctx.shadowOffsetY = 5 * scale;
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    for (const p of puffs) ctx.arc(cx + p.dx * scale, cy + p.dy * scale, p.r * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.beginPath();
+    for (const p of puffs) ctx.arc(cx + p.dx * scale, cy + (p.dy - 5) * scale, p.r * scale * 0.65, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawClouds(time) {
+    for (let i = 0; i < 4; i++) {
+      const cx = ((time * 0.015 * (i + 1) * 0.4 + i * 350) % (W + 200)) - 100;
+      const cy = 40 + i * 50;
+      drawCloud(cx, cy, 1.0 + i * 0.15);
+    }
+  }
+
+  function drawStickman(x, y, pullVec, time) {
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const headR = 12;
+    const headY = y - 80;
+
+    ctx.beginPath();
+    ctx.arc(x, headY, headR, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(x, headY + headR);
+    ctx.lineTo(x, y - 30);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(x, y - 30);
+    ctx.lineTo(x - 14, y);
+    ctx.moveTo(x, y - 30);
+    ctx.lineTo(x + 14, y);
+    ctx.stroke();
+
+    const hand = bowHandPos();
+    ctx.beginPath();
+    ctx.moveTo(x, headY + headR + 10);
+    ctx.lineTo(hand.x, hand.y);
+    ctx.stroke();
+
+    const bR = archer.bowRadius;
+    ctx.strokeStyle = '#8B4513';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(hand.x + bR * 0.3, hand.y, bR, Math.PI * 0.6, Math.PI * 1.4, true);
+    ctx.stroke();
+
+    const bowTop = {
+      x: hand.x + bR * 0.3 + Math.cos(Math.PI * 0.6) * bR,
+      y: hand.y + Math.sin(Math.PI * 0.6) * bR
+    };
+    const bowBot = {
+      x: hand.x + bR * 0.3 + Math.cos(Math.PI * 1.4) * bR,
+      y: hand.y + Math.sin(Math.PI * 1.4) * bR
+    };
+
+    const shoulder = { x: x, y: headY + headR + 10 };
+    const drawArmAnchor = { x: x - 12, y: y - 44 };
+
+    const adx = drawArmAnchor.x - shoulder.x;
+    const ady = drawArmAnchor.y - shoulder.y;
+    const armLen = Math.sqrt(adx * adx + ady * ady);
+    const vx = adx / armLen;
+    const vy = ady / armLen;
+    const perpX = -vy;
+    const perpY = vx;
+
+    const pullStrength = pullVec
+      ? Math.min(1, Math.sqrt(pullVec.x * pullVec.x + pullVec.y * pullVec.y) / MAX_PULL)
+      : 0;
+    const bend = 8 + Math.sin(time * 0.002) * 1.5 + pullStrength * 3;
+
+    const elbow = {
+      x: shoulder.x + vx * armLen * 0.5 + perpX * bend,
+      y: shoulder.y + vy * armLen * 0.5 + perpY * bend
+    };
+
+    ctx.strokeStyle = '#222';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(shoulder.x, shoulder.y);
+    ctx.lineTo(elbow.x, elbow.y);
+    ctx.lineTo(drawArmAnchor.x, drawArmAnchor.y);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#ccc';
+    ctx.lineWidth = 1.5;
+
+    if (pullVec) {
+      const px = hand.x + pullVec.x;
+      const py = hand.y + pullVec.y;
+
+      ctx.beginPath();
+      ctx.moveTo(bowTop.x, bowTop.y);
+      ctx.lineTo(px, py);
+      ctx.lineTo(bowBot.x, bowBot.y);
+      ctx.stroke();
+
+      ctx.strokeStyle = '#8B5E3C';
+      ctx.lineWidth = 2;
+      const arrLen = 50;
+      const angle = Math.atan2(-pullVec.y, -pullVec.x);
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + Math.cos(angle) * arrLen, py + Math.sin(angle) * arrLen);
+      ctx.stroke();
+      drawArrowhead(px + Math.cos(angle) * arrLen, py + Math.sin(angle) * arrLen, angle);
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(bowTop.x, bowTop.y);
+      ctx.lineTo(bowBot.x, bowBot.y);
+      ctx.stroke();
+    }
+  }
+
+  function drawArrowhead(x, y, angle) {
+    const size = 7;
+    ctx.fillStyle = '#555';
+    ctx.beginPath();
+    ctx.moveTo(x + Math.cos(angle) * size, y + Math.sin(angle) * size);
+    ctx.lineTo(x + Math.cos(angle + 2.5) * size, y + Math.sin(angle + 2.5) * size);
+    ctx.lineTo(x + Math.cos(angle - 2.5) * size, y + Math.sin(angle - 2.5) * size);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  function drawFlyingArrow(a) {
+    const angle = Math.atan2(a.vy, a.vx);
+    const len = 45;
+    const tx = a.x - Math.cos(angle) * len;
+    const ty = a.y - Math.sin(angle) * len;
+
+    ctx.strokeStyle = '#8B5E3C';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(a.x, a.y);
+    ctx.stroke();
+
+    drawArrowhead(a.x, a.y, angle);
+
+    const fAngle1 = angle + 0.4;
+    const fAngle2 = angle - 0.4;
+    ctx.strokeStyle = '#c55';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(tx + Math.cos(fAngle1) * 8, ty + Math.sin(fAngle1) * 8);
+    ctx.moveTo(tx, ty);
+    ctx.lineTo(tx + Math.cos(fAngle2) * 8, ty + Math.sin(fAngle2) * 8);
+    ctx.stroke();
+  }
+
+  function drawTarget(x, y, r) {
+    const colors = ['#e74c3c', '#ecf0f1', '#e74c3c'];
+    for (let i = colors.length - 1; i >= 0; i--) {
+      ctx.fillStyle = colors[i];
+      ctx.beginPath();
+      ctx.arc(x, y, r * (i + 1) / colors.length, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#c0392b';
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#8B4513';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(x, y + r);
+    ctx.lineTo(x, ground);
+    ctx.moveTo(x - 15, ground);
+    ctx.lineTo(x + 15, ground);
+    ctx.stroke();
+  }
+
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  // ─── Hit effect ───
+  let particles = [];
+
+  function spawnHitParticles(x, y) {
+    for (let i = 0; i < 18; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 80 + Math.random() * 160;
+      particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 0.6 + Math.random() * 0.4,
+        size: 2 + Math.random() * 3,
+        color: ['#e74c3c', '#f39c12', '#ecf0f1', '#e67e22'][Math.floor(Math.random() * 4)]
+      });
+    }
+  }
+
+  function updateParticles(dt) {
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 300 * dt;
+      p.life -= dt;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+  }
+
+  function drawParticles() {
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // ─── Game loop ───
+  let lastTime = 0;
+
+  function update(dt) {
+    if (state !== 'playing') return;
+
+    for (let i = arrows.length - 1; i >= 0; i--) {
+      const a = arrows[i];
+      a.vy += GRAVITY * dt;
+      a.x += a.vx * dt;
+      a.y += a.vy * dt;
+
+      const dx = a.x - target.x;
+      const dy = a.y - target.y;
+      if (Math.sqrt(dx * dx + dy * dy) < target.radius + 4) {
+        score++;
+        elScore.textContent = 'Score: ' + score;
+        spawnHitParticles(target.x, target.y);
+        arrows.splice(i, 1);
+        placeTarget();
+        continue;
+      }
+
+      if (a.x > W + 100 || a.y > H + 100 || a.x < -100 || a.y < -200) {
+        arrows.splice(i, 1);
+      }
+    }
+
+    updateParticles(dt);
+  }
+
+  function draw(time) {
+    ctx.clearRect(0, 0, W, H);
+    drawSky();
+    drawClouds(time);
+    drawGround();
+
+    placeArcher();
+
+    let pullVec = null;
+    if (state === 'playing' && dragging) {
+      let dx = dragCurrent.x - dragStart.x;
+      let dy = dragCurrent.y - dragStart.y;
+      let dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > MAX_PULL) {
+        dx = dx / dist * MAX_PULL;
+        dy = dy / dist * MAX_PULL;
+      }
+      pullVec = { x: dx, y: dy };
+    }
+
+    drawStickman(archer.x, archer.y, pullVec, time);
+
+    if (state === 'playing') {
+      drawTarget(target.x, target.y, target.radius);
+      for (const a of arrows) drawFlyingArrow(a);
+      drawParticles();
+    }
+  }
+
+  function loop(timestamp) {
+    const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+    lastTime = timestamp;
+
+    update(dt);
+    draw(timestamp);
+    requestAnimationFrame(loop);
+  }
+
+  // ─── Init ───
+  placeTarget();
+  updateUI();
+  handleOrientation();
+  requestAnimationFrame(function (t) {
+    lastTime = t;
+    loop(t);
+  });
+})();
+</script>
+</body>
+</html>
