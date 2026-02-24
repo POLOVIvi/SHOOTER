@@ -1,8 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useState, useCallback } from 'react';
-
-type GameState = 'start' | 'playing';
+import { useRef, useEffect, useState } from 'react';
 
 interface Arrow {
   x: number; y: number;
@@ -17,17 +15,8 @@ interface Particle {
 
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [uiState, _setUiState] = useState<GameState>('start');
   const [displayScore, setDisplayScore] = useState(0);
   const [isPortrait, setIsPortrait] = useState(false);
-
-  const stateRef = useRef<GameState>('start');
-  const resetRef = useRef<(() => void) | null>(null);
-
-  const setUiState = useCallback((s: GameState) => {
-    stateRef.current = s;
-    _setUiState(s);
-  }, []);
 
   /* ──────────────────────────────────────────────
      Game engine — runs entirely inside useEffect
@@ -35,7 +24,8 @@ export default function GameCanvas() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d')!;
+    const canvasEl = canvas;
+    const ctx = canvasEl.getContext('2d')!;
 
     let W = 0, H = 0, ground = 0;
     let animId = 0;
@@ -48,8 +38,8 @@ export default function GameCanvas() {
     const archer = { x: 0, y: 0, bowRadius: 30 };
     const target = { x: 0, y: 0, radius: 32 };
 
-    let arrows: Arrow[] = [];
-    let particles: Particle[] = [];
+    const arrows: Arrow[] = [];
+    const particles: Particle[] = [];
     let dragging = false;
     const dragStart = { x: 0, y: 0 };
     const dragCurrent = { x: 0, y: 0 };
@@ -58,8 +48,8 @@ export default function GameCanvas() {
     // ─── Helpers ───
 
     function resize() {
-      W = canvas.width = window.innerWidth;
-      H = canvas.height = window.innerHeight;
+      W = canvasEl.width = window.innerWidth;
+      H = canvasEl.height = window.innerHeight;
       ground = H * 0.78;
       const p = window.innerHeight > window.innerWidth;
       setIsPortrait(p);
@@ -83,7 +73,7 @@ export default function GameCanvas() {
     }
 
     function inputBlocked() {
-      return stateRef.current !== 'playing' || window.innerHeight > window.innerWidth;
+      return window.innerHeight > window.innerWidth;
     }
 
     // ─── Input ───
@@ -414,8 +404,6 @@ export default function GameCanvas() {
     // ─── Loop ───
 
     function update(dt: number) {
-      if (stateRef.current !== 'playing') return;
-
       for (let i = arrows.length - 1; i >= 0; i--) {
         const a = arrows[i];
         a.vy += GRAVITY * dt;
@@ -450,10 +438,10 @@ export default function GameCanvas() {
       placeArcher();
 
       let pullVec: { x: number; y: number } | null = null;
-      if (stateRef.current === 'playing' && dragging) {
+      if (dragging) {
         let dx = dragCurrent.x - dragStart.x;
         let dy = dragCurrent.y - dragStart.y;
-        let dist = Math.sqrt(dx * dx + dy * dy);
+        const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > MAX_PULL) {
           dx = dx / dist * MAX_PULL;
           dy = dy / dist * MAX_PULL;
@@ -463,11 +451,9 @@ export default function GameCanvas() {
 
       drawStickman(archer.x, archer.y, pullVec, time);
 
-      if (stateRef.current === 'playing') {
-        drawTarget(target.x, target.y, target.radius);
-        for (const a of arrows) drawFlyingArrow(a);
-        drawParticles();
-      }
+      drawTarget(target.x, target.y, target.radius);
+      for (const a of arrows) drawFlyingArrow(a);
+      drawParticles();
     }
 
     function loop(timestamp: number) {
@@ -478,27 +464,18 @@ export default function GameCanvas() {
       animId = requestAnimationFrame(loop);
     }
 
-    // ─── Expose reset to React layer ───
-    resetRef.current = () => {
-      scoreVal = 0;
-      arrows.length = 0;
-      particles.length = 0;
-      dragging = false;
-      placeTarget();
-    };
-
     // ─── Bootstrap ───
     resize();
     placeTarget();
 
     window.addEventListener('resize', resize);
-    canvas.addEventListener('mousedown', onDown);
-    canvas.addEventListener('mousemove', onMove);
-    canvas.addEventListener('mouseup', onUp);
-    canvas.addEventListener('touchstart', onDown, { passive: false });
-    canvas.addEventListener('touchmove', onMove, { passive: false });
-    canvas.addEventListener('touchend', onUp, { passive: false });
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    canvasEl.addEventListener('mousedown', onDown);
+    canvasEl.addEventListener('mousemove', onMove);
+    canvasEl.addEventListener('mouseup', onUp);
+    canvasEl.addEventListener('touchstart', onDown, { passive: false });
+    canvasEl.addEventListener('touchmove', onMove, { passive: false });
+    canvasEl.addEventListener('touchend', onUp, { passive: false });
+    canvasEl.addEventListener('contextmenu', (e) => e.preventDefault());
 
     animId = requestAnimationFrame((t) => {
       lastTime = t;
@@ -508,33 +485,14 @@ export default function GameCanvas() {
     return () => {
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', resize);
-      canvas.removeEventListener('mousedown', onDown);
-      canvas.removeEventListener('mousemove', onMove);
-      canvas.removeEventListener('mouseup', onUp);
-      canvas.removeEventListener('touchstart', onDown);
-      canvas.removeEventListener('touchmove', onMove);
-      canvas.removeEventListener('touchend', onUp);
+      canvasEl.removeEventListener('mousedown', onDown);
+      canvasEl.removeEventListener('mousemove', onMove);
+      canvasEl.removeEventListener('mouseup', onUp);
+      canvasEl.removeEventListener('touchstart', onDown);
+      canvasEl.removeEventListener('touchmove', onMove);
+      canvasEl.removeEventListener('touchend', onUp);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ─── Actions ───
-
-  const startFlow = useCallback(async () => {
-    console.log('START flow: placeholder for wallet connect + tx');
-    // TODO: const config = getWagmiConfig();
-    // TODO: const { accounts } = await connect(config, { connector: coinbaseWallet() });
-    // TODO: const hash = await sendTransaction(config, { to: '0x...', value: parseEther('0.001') });
-    if (resetRef.current) resetRef.current();
-    setDisplayScore(0);
-    setUiState('playing');
-  }, [setUiState]);
-
-  const exitGame = useCallback(() => {
-    if (resetRef.current) resetRef.current();
-    setDisplayScore(0);
-    setUiState('start');
-  }, [setUiState]);
 
   // ─── Render ───
 
@@ -547,29 +505,9 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {uiState === 'start' && (
-        <div className="start-overlay">
-          <div className="start-card">
-            <h1>SHOOTER</h1>
-            <p className="subtitle">
-              Drag near the bow to aim, release to shoot.<br />
-              Hit the target to score!
-            </p>
-            <button className="btn btn-primary" onClick={startFlow}>
-              START
-            </button>
-          </div>
-        </div>
-      )}
-
-      {uiState === 'playing' && (
-        <div className="hud">
-          <div className="hud-pill">Score: {displayScore}</div>
-          <button className="btn-exit" onClick={exitGame}>
-            EXIT
-          </button>
-        </div>
-      )}
+      <div className="hud">
+        <div className="hud-pill">Score: {displayScore}</div>
+      </div>
 
       <canvas ref={canvasRef} />
     </>
