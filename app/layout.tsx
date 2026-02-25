@@ -6,6 +6,7 @@ export const metadata: Metadata = {
   title: 'SHOOTER',
   description: 'Stickman Archer – Base Mini App',
   other: {
+    'base:app_id': '699e3e8773907ae76bc3641f',
     'apple-mobile-web-app-capable': 'yes',
     'mobile-web-app-capable': 'yes',
     'apple-mobile-web-app-status-bar-style': 'black-translucent',
