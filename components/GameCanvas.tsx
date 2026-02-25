@@ -20,7 +20,32 @@ type GameCanvasProps = {
 export default function GameCanvas({ onExit }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [displayScore, setDisplayScore] = useState(0);
-  const [isPortrait, setIsPortrait] = useState(false);
+  const [isLandscape, setIsLandscape] = useState(true);
+
+  useEffect(() => {
+    const update = () => {
+      const nextIsLandscape =
+        window.matchMedia('(orientation: landscape)').matches ||
+        window.innerWidth > window.innerHeight;
+      setIsLandscape(nextIsLandscape);
+    };
+
+    update();
+    const delayedUpdateId = window.setTimeout(update, 200);
+
+    window.addEventListener('resize', update);
+    window.addEventListener('orientationchange', update);
+
+    const viewport = window.visualViewport;
+    viewport?.addEventListener('resize', update);
+
+    return () => {
+      window.clearTimeout(delayedUpdateId);
+      window.removeEventListener('resize', update);
+      window.removeEventListener('orientationchange', update);
+      viewport?.removeEventListener('resize', update);
+    };
+  }, []);
 
   /* ──────────────────────────────────────────────
      Game engine — runs entirely inside useEffect
@@ -55,9 +80,6 @@ export default function GameCanvas({ onExit }: GameCanvasProps) {
       W = canvasEl.width = window.innerWidth;
       H = canvasEl.height = window.innerHeight;
       ground = H * 0.78;
-      const p = window.innerHeight > window.innerWidth;
-      setIsPortrait(p);
-      if (p) dragging = false;
     }
 
     function placeArcher() {
@@ -76,10 +98,6 @@ export default function GameCanvas({ onExit }: GameCanvasProps) {
       return { x: archer.x + 18, y: archer.y - 58 };
     }
 
-    function inputBlocked() {
-      return window.innerHeight > window.innerWidth;
-    }
-
     // ─── Input ───
 
     function getPos(e: MouseEvent | TouchEvent) {
@@ -91,7 +109,6 @@ export default function GameCanvas({ onExit }: GameCanvasProps) {
 
     function onDown(e: Event) {
       e.preventDefault();
-      if (inputBlocked()) return;
       const p = getPos(e as MouseEvent | TouchEvent);
       const hand = bowHandPos();
       const dx = p.x - hand.x;
@@ -107,7 +124,7 @@ export default function GameCanvas({ onExit }: GameCanvasProps) {
 
     function onMove(e: Event) {
       e.preventDefault();
-      if (inputBlocked() || !dragging) return;
+      if (!dragging) return;
       const p = getPos(e as MouseEvent | TouchEvent);
       dragCurrent.x = p.x;
       dragCurrent.y = p.y;
@@ -115,7 +132,7 @@ export default function GameCanvas({ onExit }: GameCanvasProps) {
 
     function onUp(e: Event) {
       e.preventDefault();
-      if (inputBlocked() || !dragging) return;
+      if (!dragging) return;
       dragging = false;
 
       let dx = dragStart.x - dragCurrent.x;
@@ -502,19 +519,19 @@ export default function GameCanvas({ onExit }: GameCanvasProps) {
 
   return (
     <>
-      {isPortrait && (
-        <div className="rotate-overlay">
-          <div className="rotate-icon">📱</div>
-          <p>Rotate your device to landscape</p>
-        </div>
-      )}
-
       <div className="hud">
         <button className="btn-exit" onClick={onExit}>NEW GAME</button>
         <div className="hud-pill">Score: {displayScore}</div>
       </div>
 
       <canvas ref={canvasRef} />
+
+      {!isLandscape && (
+        <div className="rotate-overlay">
+          <div className="rotate-icon">📱</div>
+          <p>Rotate your device to landscape</p>
+        </div>
+      )}
     </>
   );
 }
