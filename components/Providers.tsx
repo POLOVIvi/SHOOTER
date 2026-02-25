@@ -4,18 +4,21 @@ import { ReactNode, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider, createConfig, http } from 'wagmi';
 import { base } from 'wagmi/chains';
-import { coinbaseWallet } from 'wagmi/connectors';
+import { injected } from 'wagmi/connectors';
+import { ensureRandomUuidPolyfill } from '@/lib/safeUuid';
 
 // Lazy-init to avoid SSR access to browser APIs
 let _wagmiConfig: ReturnType<typeof createConfig> | null = null;
+
 function getWagmiConfig() {
   if (!_wagmiConfig) {
+    ensureRandomUuidPolyfill();
+
     _wagmiConfig = createConfig({
       chains: [base],
-      connectors: [
-        coinbaseWallet({ appName: 'SHOOTER', preference: 'smartWalletOnly' }),
-      ],
+      connectors: [injected()],
       transports: { [base.id]: http() },
+      storage: null,
     });
   }
   return _wagmiConfig;
@@ -23,20 +26,12 @@ function getWagmiConfig() {
 
 export { getWagmiConfig };
 
-// OnchainKitProvider will be added here once a valid API key is configured.
-// import { OnchainKitProvider } from '@coinbase/onchainkit';
-//
-// Wrap {inner} with:
-//   <OnchainKitProvider chain={base} apiKey={process.env.NEXT_PUBLIC_ONCHAINKIT_API_KEY}>
-//     {inner}
-//   </OnchainKitProvider>
-
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient());
   const [config] = useState(getWagmiConfig);
 
   return (
-    <WagmiProvider config={config}>
+    <WagmiProvider config={config} reconnectOnMount={false}>
       <QueryClientProvider client={queryClient}>
         {children}
       </QueryClientProvider>

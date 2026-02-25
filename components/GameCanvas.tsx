@@ -13,7 +13,11 @@ interface Particle {
   life: number; size: number; color: string;
 }
 
-export default function GameCanvas() {
+type GameCanvasProps = {
+  onExit: () => void;
+};
+
+export default function GameCanvas({ onExit }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [displayScore, setDisplayScore] = useState(0);
   const [isPortrait, setIsPortrait] = useState(false);
@@ -506,6 +510,7 @@ export default function GameCanvas() {
       )}
 
       <div className="hud">
+        <button className="btn-exit" onClick={onExit}>NEW GAME</button>
         <div className="hud-pill">Score: {displayScore}</div>
       </div>
 

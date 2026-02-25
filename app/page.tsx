@@ -1,47 +1,39 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { type Address } from 'viem';
-import { useAccount, usePublicClient } from 'wagmi';
+import { useCallback, useEffect, useState } from 'react';
 import GameCanvas from '@/components/GameCanvas';
 import PaywallStart from '@/components/PaywallStart';
-import { BASE_CHAIN_ID, PAYWALL_ABI, PAYWALL_ADDRESS } from '@/lib/contract';
 
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const CONTRACT_CONFIGURED = PAYWALL_ADDRESS.toLowerCase() !== ZERO_ADDRESS;
+const STORAGE_KEY = 'shooter_paid_v1';
 
 export default function Home() {
-  const [paid, setPaid] = useState(false);
-  const { address, isConnected, chainId } = useAccount();
-  const publicClient = usePublicClient({ chainId: BASE_CHAIN_ID });
+  const [isPaid, setIsPaid] = useState(false);
+  const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
-    const refreshPaidStatus = async () => {
-      try {
-        if (
-          !CONTRACT_CONFIGURED ||
-          !publicClient ||
-          !isConnected ||
-          !address ||
-          chainId !== BASE_CHAIN_ID
-        ) {
-          setPaid(false);
-          return;
-        }
-        const result = await publicClient.readContract({
-          address: PAYWALL_ADDRESS as Address,
-          abi: PAYWALL_ABI,
-          functionName: 'hasPaid',
-          args: [address as Address],
-        });
-        setPaid(Boolean(result));
-      } catch {
-        setPaid(false);
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        setIsPaid(false);
+        return;
       }
-    };
+      const parsed = JSON.parse(raw) as { paid?: boolean } | null;
+      setIsPaid(Boolean(parsed?.paid));
+    } catch {
+      setIsPaid(false);
+    } finally {
+      setIsHydrated(true);
+    }
+  }, []);
 
-    void refreshPaidStatus();
-  }, [publicClient, isConnected, address, chainId]);
+  const clearPayment = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY);
+    setIsPaid(false);
+  }, []);
 
-  return paid ? <GameCanvas /> : <PaywallStart onPaid={() => setPaid(true)} />;
+  if (!isHydrated) return null;
+
+  return isPaid
+    ? <GameCanvas onExit={clearPayment} />
+    : <PaywallStart onPaid={() => setIsPaid(true)} onReset={clearPayment} />;
 }

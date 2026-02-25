@@ -1,25 +1,20 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { type Address } from 'viem';
-import {
-  useAccount,
-  useConnect,
-  useSwitchChain,
-  usePublicClient,
-  useWriteContract,
-  useWaitForTransactionReceipt,
-} from 'wagmi';
-import { BASE_CHAIN_ID, PAYWALL_ABI, PAYWALL_ADDRESS } from '@/lib/contract';
+import { parseEther } from 'viem';
+import { useAccount, useConnect, useSendTransaction, useSwitchChain, useWaitForTransactionReceipt } from 'wagmi';
 
+const BASE_CHAIN_ID = 8453;
+const PAYMENT_TO = '0x62f2df490e0b72e0d3b3d1c6c65f5c49f56d66e2';
+const PAYMENT_VALUE = parseEther('0.00001');
 const BASESCAN_TX_URL = 'https://basescan.org/tx/';
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
-const CONTRACT_CONFIGURED = PAYWALL_ADDRESS.toLowerCase() !== ZERO_ADDRESS;
+const STORAGE_KEY = 'shooter_paid_v1';
 
 type TxHash = `0x${string}`;
 
 type PaywallStartProps = {
   onPaid: () => void;
+  onReset: () => void;
 };
 
 function toReadableError(error: unknown): string {
@@ -37,12 +32,11 @@ function toReadableError(error: unknown): string {
   return message;
 }
 
-export default function PaywallStart({ onPaid }: PaywallStartProps) {
-  const { address, isConnected, chainId } = useAccount();
+export default function PaywallStart({ onPaid, onReset }: PaywallStartProps) {
+  const { isConnected, chainId } = useAccount();
   const { connectAsync, connectors, isPending: isConnectPending } = useConnect();
   const { switchChainAsync, isPending: isSwitchPending } = useSwitchChain();
-  const publicClient = usePublicClient({ chainId: BASE_CHAIN_ID });
-  const { writeContractAsync, isPending: isWritePending } = useWriteContract();
+  const { sendTransactionAsync, isPending: isSendPending } = useSendTransaction();
 
   const [status, setStatus] = useState<string | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -59,49 +53,32 @@ export default function PaywallStart({ onPaid }: PaywallStartProps) {
     query: { enabled: Boolean(txHash) },
   });
 
-  const checkPaidOnChain = useCallback(
-    async (walletAddress: Address) => {
-      if (!publicClient || !CONTRACT_CONFIGURED) return false;
-      return publicClient.readContract({
-        address: PAYWALL_ADDRESS as Address,
-        abi: PAYWALL_ABI,
-        functionName: 'hasPaid',
-        args: [walletAddress],
-      });
-    },
-    [publicClient],
-  );
-
   const isBusy = useMemo(
-    () => isConnectPending || isSwitchPending || isWritePending || isWaitingConfirmation,
-    [isConnectPending, isSwitchPending, isWritePending, isWaitingConfirmation],
+    () => isConnectPending || isSwitchPending || isSendPending || isWaitingConfirmation,
+    [isConnectPending, isSwitchPending, isSendPending, isWaitingConfirmation],
   );
 
   useEffect(() => {
     if (!receipt) return;
 
-    const finalizePayment = async () => {
-      if (receipt.status !== 'success') {
-        setStatus(null);
-        setErrorText('Transaction failed onchain (receipt is not success).');
-        return;
-      }
-      if (!address) {
-        setStatus(null);
-        setErrorText('Wallet is not connected after confirmation.');
-        return;
-      }
-      const paid = await checkPaidOnChain(address);
-      if (paid) {
-        onPaid();
-        return;
-      }
+    if (receipt.status !== 'success') {
       setStatus(null);
-      setErrorText('Payment tx confirmed, but access flag is still false onchain.');
-    };
+      setErrorText('Transaction failed onchain (receipt is not success).');
+      return;
+    }
 
-    void finalizePayment();
-  }, [receipt, address, checkPaidOnChain, onPaid]);
+    if (txHash) {
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          paid: true,
+          txHash,
+        }),
+      );
+    }
+    setStatus('Payment confirmed.');
+    onPaid();
+  }, [receipt, onPaid, txHash]);
 
   useEffect(() => {
     if (!isReceiptError) return;
@@ -109,83 +86,54 @@ export default function PaywallStart({ onPaid }: PaywallStartProps) {
     setErrorText(toReadableError(receiptError));
   }, [isReceiptError, receiptError]);
 
+  const continueFlow = useCallback(async (currentChainId: number) => {
+    if (currentChainId !== BASE_CHAIN_ID) {
+      setStatus('Switching network...');
+      await switchChainAsync({ chainId: BASE_CHAIN_ID });
+    }
+
+    setStatus('Sending transaction...');
+    const hash = await sendTransactionAsync({
+      to: PAYMENT_TO,
+      value: PAYMENT_VALUE,
+      chainId: BASE_CHAIN_ID,
+    });
+    setTxHash(hash);
+    setStatus('Waiting confirmation...');
+  }, [switchChainAsync, sendTransactionAsync]);
+
   const startFlow = useCallback(async () => {
     setErrorText(null);
     setTxHash(null);
-
-    if (!CONTRACT_CONFIGURED) {
-      setStatus(null);
-      setErrorText('Paywall contract is not configured. Set PAYWALL_ADDRESS in lib/contract.ts');
-      return;
-    }
+    setStatus(null);
 
     try {
-      let currentChainId = chainId;
-      let currentAddress = address as Address | undefined;
+      let currentChainId = chainId ?? 0;
 
       if (!isConnected) {
         setStatus('Connecting...');
-        const connector = connectors[0];
-        if (!connector) {
-          throw new Error('No wallet connector available.');
+        const injectedConnector = connectors.find((connector) => connector.id === 'injected');
+        if (!injectedConnector) {
+          throw new Error('Injected wallet is not available.');
         }
-        const connected = await connectAsync({ connector });
+        const connected = await connectAsync({ connector: injectedConnector });
         currentChainId = connected.chainId;
-        currentAddress = connected.accounts[0] as Address | undefined;
       }
 
-      if (currentChainId !== BASE_CHAIN_ID) {
-        setStatus('Switching network...');
-        await switchChainAsync({ chainId: BASE_CHAIN_ID });
-      }
-
-      if (!currentAddress) {
-        throw new Error('Wallet address is missing.');
-      }
-
-      setStatus('Checking access...');
-      const alreadyPaid = await checkPaidOnChain(currentAddress);
-      if (alreadyPaid) {
-        onPaid();
-        return;
-      }
-
-      if (!publicClient) {
-        throw new Error('Public client for Base is unavailable.');
-      }
-
-      const priceWei = await publicClient.readContract({
-        address: PAYWALL_ADDRESS as Address,
-        abi: PAYWALL_ABI,
-        functionName: 'priceWei',
-      });
-
-      setStatus('Sending transaction...');
-      const hash = await writeContractAsync({
-        address: PAYWALL_ADDRESS as Address,
-        abi: PAYWALL_ABI,
-        functionName: 'pay',
-        value: priceWei,
-        chainId: BASE_CHAIN_ID,
-      });
-      setTxHash(hash);
-      setStatus('Waiting confirmation...');
+      await continueFlow(currentChainId);
     } catch (error) {
       setStatus(null);
       setErrorText(toReadableError(error));
     }
-  }, [
-    chainId,
-    address,
-    isConnected,
-    connectors,
-    connectAsync,
-    switchChainAsync,
-    publicClient,
-    checkPaidOnChain,
-    writeContractAsync,
-    onPaid,
-  ]);
+  }, [isConnected, chainId, connectors, connectAsync, continueFlow]);
+
+  const resetPayment = useCallback(() => {
+    localStorage.removeItem(STORAGE_KEY);
+    setStatus(null);
+    setErrorText(null);
+    setTxHash(null);
+    onReset();
+  }, [onReset]);
 
   return (
     <div className="start-overlay">
@@ -207,6 +155,9 @@ export default function PaywallStart({ onPaid }: PaywallStartProps) {
 
         <button className="btn btn-primary" onClick={startFlow} disabled={isBusy}>
           {isBusy ? 'Processing...' : 'START'}
+        </button>
+        <button className="btn" onClick={resetPayment} disabled={isBusy}>
+          Reset (dev)
         </button>
       </div>
     </div>
